@@ -1,0 +1,789 @@
+/*
+ * Your rights to use code governed by this license https://github.com/AlexWan/OsEngine/blob/master/LICENSE
+ * Ваши права на использование кода регулируются данной лицензией http://o-s-a.net/doc/license_simple_engine.pdf
+ */
+
+using OsEngine.Entity;
+using OsEngine.Logging;
+using OsEngine.OsTrader.Panels;
+using OsEngine.OsTrader.Panels.Attributes;
+using OsEngine.OsTrader.Panels.Tab;
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Globalization;
+using System.Threading;
+using System.Windows.Forms;
+using System.Windows.Forms.Integration;
+
+namespace OsEngine.Robots.ttView3
+{
+    [Bot("ttView3")]
+    public class ttView3 : BotPanel
+    {
+        private const int PairCount = 3;
+        private const int TabCount = 6;
+        private const int UpdateIntervalMs = 3000;
+        private const int DeleteCheckIntervalMs = 100;
+
+        private const decimal Pair12Coefficient = 0.001m;
+        private const decimal Pair34Coefficient = 0.001m;
+        private const decimal Pair56Coefficient = 0.001m; // заменить после уточнения коэффициента для CNY
+
+        private static readonly CultureInfo RuCulture = new CultureInfo("ru-RU");
+        private static readonly Color PositiveColor = ColorTranslator.FromHtml("#009b63");
+        private static readonly Color NegativeColor = ColorTranslator.FromHtml("#d1261b");
+
+        private readonly BotTabSimple[] _tabs = new BotTabSimple[TabCount];
+        private readonly string[] _pairLabels = { "USDRUB", "EURRUB", "CNYRUB" };
+        private readonly decimal[] _pairCoefficients = { Pair12Coefficient, Pair34Coefficient, Pair56Coefficient };
+        private readonly StrategyParameterDecimal _fundingPair12;
+        private readonly StrategyParameterDecimal _fundingPair34;
+        private readonly StrategyParameterDecimal _fundingPair56;
+        private readonly Thread _worker;
+
+        private volatile bool _isDeleted;
+
+        private WindowsFormsHost _viewHost;
+        private DataGridView _viewGrid;
+
+        public ttView3(string name, StartProgram startProgram)
+            : base(name, startProgram)
+        {
+            // Six Simple tabs are grouped into three fixed pairs: 1-2, 3-4, 5-6.
+            for (int i = 0; i < TabCount; i++)
+            {
+                TabCreate(BotTabType.Simple);
+                _tabs[i] = TabsSimple[i];
+            }
+
+            ParamGuiSettings.Title = "View 3";
+            ParamGuiSettings.Height = 470;
+            ParamGuiSettings.Width = 1120;
+            ParamGuiSettings.CustomTabsFirst = true;
+
+            _fundingPair12 = CreateParameter("Фандинг USDRUB, руб", 0m, -100000000m, 100000000m, 0.01m, " Fund ");
+            _fundingPair34 = CreateParameter("Фандинг EURRUB, руб", 0m, -100000000m, 100000000m, 0.01m, " Fund ");
+            _fundingPair56 = CreateParameter("Фандинг CNYRUB, руб", 0m, -100000000m, 100000000m, 0.01m, " Fund ");
+
+            CreateViewGrid();
+
+            CustomTabToParametersUi viewTab = ParamGuiSettings.CreateCustomTab(" View ");
+            viewTab.AddChildren(_viewHost);
+
+            Description = "Shows three spread pairs in one window using six manually selected tabs.";
+
+            DeleteEvent += OnDeleteEvent;
+
+            _worker = new Thread(WorkerArea);
+            _worker.IsBackground = true;
+            _worker.Name = $"{name} View3 worker";
+            _worker.Start();
+        }
+
+        public override string GetNameStrategyType()
+        {
+            return "ttView3";
+        }
+
+        public override void ShowIndividualSettingsDialog()
+        {
+        }
+
+        private void OnDeleteEvent()
+        {
+            _isDeleted = true;
+        }
+
+        private void WorkerArea()
+        {
+            while (_isDeleted == false)
+            {
+                try
+                {
+                    PaintView(BuildViewMatrix());
+                }
+                catch (Exception ex)
+                {
+                    SendNewLogMessage(ex.ToString(), LogMessageType.Error);
+                }
+
+                SleepWithCancel(UpdateIntervalMs);
+            }
+        }
+
+        private void SleepWithCancel(int milliseconds)
+        {
+            int elapsed = 0;
+
+            while (_isDeleted == false && elapsed < milliseconds)
+            {
+                Thread.Sleep(DeleteCheckIntervalMs);
+                elapsed += DeleteCheckIntervalMs;
+            }
+        }
+
+        private ViewMatrix BuildViewMatrix()
+        {
+            string[] instruments = new string[PairCount];
+            string[] firstEntryValues = new string[PairCount];
+            string[] secondEntryValues = new string[PairCount];
+            string[] spreadOpenValues = new string[PairCount];
+            string[] currentSpreadValues = new string[PairCount];
+            Color?[] currentSpreadColors = new Color?[PairCount];
+            string[] pnlValues = new string[PairCount];
+            Color?[] pnlColors = new Color?[PairCount];
+            decimal totalPnl = 0;
+
+            for (int i = 0; i < PairCount; i++)
+            {
+                PairSnapshot pair = BuildPairSnapshot(i);
+
+                instruments[i] = pair.Instruments;
+                firstEntryValues[i] = pair.FirstEntryValue;
+                secondEntryValues[i] = pair.SecondEntryValue;
+                spreadOpenValues[i] = pair.SpreadOpenValue;
+                currentSpreadValues[i] = pair.CurrentSpreadValue;
+                currentSpreadColors[i] = pair.CurrentSpreadColor;
+                pnlValues[i] = pair.PnlValue;
+                pnlColors[i] = pair.PnlColor;
+                totalPnl += pair.CurrentPnlRub;
+            }
+
+            // The total row is shown only in the first pair column by request.
+            string[] totalValues = { FormatMoney(totalPnl), string.Empty, string.Empty };
+            Color?[] totalColors = { GetValueColor(totalPnl), null, null };
+
+            return new ViewMatrix(
+                (string[])_pairLabels.Clone(),
+                new List<ViewRow>
+                {
+                    new ViewRow("Инструменты", instruments),
+                    new ViewRow("Средняя цена входа 1", firstEntryValues),
+                    new ViewRow("Средняя цена входа 2", secondEntryValues),
+                    new ViewRow("Спред на открытии", spreadOpenValues),
+                    new ViewRow("Текущий спред", currentSpreadValues, currentSpreadColors),
+                    new ViewRow("Текущий PnL + фандинг", pnlValues, pnlColors),
+                    new ViewRow("Общая прибыль", totalValues, totalColors)
+                });
+        }
+
+        private PairSnapshot BuildPairSnapshot(int pairIndex)
+        {
+            BotTabSimple firstTab = GetFirstTab(pairIndex);
+            BotTabSimple secondTab = GetSecondTab(pairIndex);
+
+            TabState first = GetTabState(firstTab);
+            TabState second = GetTabState(secondTab);
+
+            string firstEntryValue = first.HasEntryPrice ? FormatPrice(first.EntryPrice, firstTab) : "-";
+            string secondEntryValue = second.HasEntryPrice ? FormatPrice(second.EntryPrice, secondTab) : "-";
+            string spreadOpenValue = "- / -";
+            string currentSpreadValue = "Откройте обе ноги";
+            Color? currentSpreadColor = null;
+
+            decimal currentPnl = CalculateCurrentPnlRub(first, firstTab)
+                + CalculateCurrentPnlRub(second, secondTab)
+                + GetFundingValue(pairIndex);
+
+            // Spread and PnL are independent: spread can be negative while PnL stays positive because of funding.
+            if (first.HasPosition && second.HasPosition)
+            {
+                if (first.HasEntryPrice && second.HasEntryPrice)
+                {
+                    decimal coefficient = _pairCoefficients[pairIndex];
+
+                    if (coefficient == 0)
+                    {
+                        currentSpreadValue = "Коэфф. равен 0";
+                    }
+                    else
+                    {
+                        decimal spreadOpenPoints = CalculateSpreadPoints(first.EntryPrice, second.EntryPrice, coefficient);
+                        decimal spreadOpenPercent = CalculateSpreadPercent(first.EntryPrice, second.EntryPrice, coefficient);
+
+                        spreadOpenValue = $"{FormatSignedInteger(spreadOpenPoints)} пп / {FormatSignedPercent(spreadOpenPercent)}";
+
+                        if (first.CurrentPrice == 0 || second.CurrentPrice == 0)
+                        {
+                            currentSpreadValue = "Нет текущих котировок";
+                        }
+                        else
+                        {
+                            decimal spreadCurrentPoints = CalculateSpreadPoints(first.CurrentPrice, second.CurrentPrice, coefficient);
+                            decimal spreadCurrentPercent = CalculateSpreadPercent(first.CurrentPrice, second.CurrentPrice, coefficient);
+
+                            decimal deltaPoints = spreadCurrentPoints - spreadOpenPoints;
+                            decimal deltaPercent = spreadCurrentPercent - spreadOpenPercent;
+
+                            currentSpreadValue = $"{FormatSignedInteger(deltaPoints)} пп / {FormatSignedPercent(deltaPercent)}";
+                            currentSpreadColor = GetSpreadColor(deltaPoints);
+                        }
+                    }
+                }
+                else
+                {
+                    currentSpreadValue = "Нет цены входа";
+                }
+            }
+
+            return new PairSnapshot(
+                GetSelectedInstruments(firstTab, secondTab),
+                firstEntryValue,
+                secondEntryValue,
+                spreadOpenValue,
+                currentSpreadValue,
+                currentSpreadColor,
+                FormatMoney(currentPnl),
+                GetValueColor(currentPnl),
+                currentPnl);
+        }
+
+        private BotTabSimple GetFirstTab(int pairIndex)
+        {
+            return _tabs[pairIndex * 2];
+        }
+
+        private decimal GetFundingValue(int pairIndex)
+        {
+            if (pairIndex == 0)
+            {
+                return _fundingPair12.ValueDecimal;
+            }
+
+            if (pairIndex == 1)
+            {
+                return _fundingPair34.ValueDecimal;
+            }
+
+            return _fundingPair56.ValueDecimal;
+        }
+
+        private BotTabSimple GetSecondTab(int pairIndex)
+        {
+            return _tabs[pairIndex * 2 + 1];
+        }
+
+        private string GetSelectedInstruments(BotTabSimple firstTab, BotTabSimple secondTab)
+        {
+            return GetSecurityName(firstTab) + " / " + GetSecurityName(secondTab);
+        }
+
+        private string GetSecurityName(BotTabSimple tab)
+        {
+            string securityName = tab?.Security?.Name;
+
+            if (string.IsNullOrWhiteSpace(securityName))
+            {
+                return "-";
+            }
+
+            return securityName;
+        }
+
+        private Color? GetSpreadColor(decimal deltaPoints)
+        {
+            if (deltaPoints > 0)
+            {
+                return PositiveColor;
+            }
+
+            if (deltaPoints < 0)
+            {
+                return NegativeColor;
+            }
+
+            return null;
+        }
+
+        private Color? GetValueColor(decimal value)
+        {
+            if (value > 0)
+            {
+                return PositiveColor;
+            }
+
+            if (value < 0)
+            {
+                return NegativeColor;
+            }
+
+            return null;
+        }
+
+        private TabState GetTabState(BotTabSimple tab)
+        {
+            TabState result = new TabState();
+
+            if (tab == null)
+            {
+                return result;
+            }
+
+            result.CurrentPrice = GetCurrentPrice(tab);
+
+            LoadStateFromPortfolio(tab, result);
+            LoadStateFromJournal(tab, result);
+
+            return result;
+        }
+
+        private void LoadStateFromPortfolio(BotTabSimple tab, TabState result)
+        {
+            List<PositionOnBoard> positionsOnBoard = tab.PositionsOnBoard;
+
+            if (positionsOnBoard == null || positionsOnBoard.Count == 0)
+            {
+                return;
+            }
+
+            decimal pnlRub = 0;
+            EntryAggregation entryAggregation = new EntryAggregation();
+            decimal signedVolume = 0;
+
+            for (int i = 0; i < positionsOnBoard.Count; i++)
+            {
+                PositionOnBoard position = positionsOnBoard[i];
+
+                if (position == null || position.ValueCurrent == 0)
+                {
+                    continue;
+                }
+
+                decimal volumeAbs = Math.Abs(position.ValueCurrent);
+
+                result.HasPosition = true;
+                result.HasPortfolioPosition = true;
+                pnlRub += position.UnrealizedPnl;
+                signedVolume += position.ValueCurrent;
+
+                AddEntryToAggregation(ref entryAggregation, position.EntryPrice, volumeAbs);
+            }
+
+            if (result.HasPortfolioPosition == false)
+            {
+                return;
+            }
+
+            result.PnlRub = pnlRub;
+            result.PositionVolume = signedVolume;
+
+            if (entryAggregation.TotalVolume > 0)
+            {
+                result.EntryPrice = entryAggregation.WeightedEntry / entryAggregation.TotalVolume;
+                result.HasEntryPrice = true;
+            }
+        }
+
+        private void LoadStateFromJournal(BotTabSimple tab, TabState result)
+        {
+            List<Position> positions = tab.PositionsOpenAll;
+
+            if (positions == null || positions.Count == 0)
+            {
+                return;
+            }
+
+            EntryAggregation entryAggregation = new EntryAggregation();
+            decimal pnlRub = 0;
+            decimal signedVolume = 0;
+            bool hasJournalPosition = false;
+
+            for (int i = 0; i < positions.Count; i++)
+            {
+                Position position = positions[i];
+
+                if (position == null
+                    || position.State == PositionStateType.Done
+                    || position.State == PositionStateType.OpeningFail)
+                {
+                    continue;
+                }
+
+                decimal volume = Math.Abs(position.OpenVolume);
+
+                if (volume <= 0)
+                {
+                    continue;
+                }
+
+                decimal signedOpenVolume = GetSignedVolume(volume, position.Direction);
+
+                AddEntryToAggregation(ref entryAggregation, position.EntryPrice, volume);
+                pnlRub += position.ProfitPortfolioAbs;
+                signedVolume += signedOpenVolume;
+                hasJournalPosition = true;
+            }
+
+            if (hasJournalPosition == false)
+            {
+                return;
+            }
+
+            result.HasPosition = true;
+
+            if (result.HasEntryPrice == false && entryAggregation.TotalVolume > 0)
+            {
+                result.EntryPrice = entryAggregation.WeightedEntry / entryAggregation.TotalVolume;
+                result.HasEntryPrice = true;
+            }
+
+            if (result.HasPortfolioPosition == false)
+            {
+                result.PnlRub = pnlRub;
+                result.PositionVolume = signedVolume;
+            }
+        }
+
+        private decimal CalculateCurrentPnlRub(TabState state, BotTabSimple tab)
+        {
+            if (state.HasPosition == false)
+            {
+                return 0;
+            }
+
+            if (state.HasEntryPrice == false
+                || state.CurrentPrice == 0
+                || state.PositionVolume == 0
+                || tab == null
+                || tab.Security == null)
+            {
+                return state.PnlRub;
+            }
+
+            Security security = tab.Security;
+            decimal priceDiff = state.CurrentPrice - state.EntryPrice;
+
+            if (state.PositionVolume < 0)
+            {
+                priceDiff = -priceDiff;
+            }
+
+            decimal priceStep = security.PriceStep;
+            decimal priceStepCost = security.PriceStepCost;
+
+            if (priceStepCost == 0)
+            {
+                priceStepCost = 1;
+            }
+
+            decimal volume = Math.Abs(state.PositionVolume);
+
+            if (priceStep != 0 && priceStep != priceStepCost)
+            {
+                return (priceDiff / priceStep) * priceStepCost * volume;
+            }
+
+            return priceDiff * priceStepCost * volume;
+        }
+
+        private void AddEntryToAggregation(ref EntryAggregation aggregation, decimal entryPrice, decimal volumeAbs)
+        {
+            if (entryPrice <= 0 || volumeAbs <= 0)
+            {
+                return;
+            }
+
+            aggregation.TotalVolume += volumeAbs;
+            aggregation.WeightedEntry += entryPrice * volumeAbs;
+        }
+
+        private decimal GetSignedVolume(decimal volume, Side side)
+        {
+            return side == Side.Sell
+                ? -volume
+                : volume;
+        }
+
+        private decimal GetCurrentPrice(BotTabSimple tab)
+        {
+            if (tab == null)
+            {
+                return 0;
+            }
+
+            decimal ask = tab.PriceBestAsk;
+            decimal bid = tab.PriceBestBid;
+
+            if (ask != 0 && bid != 0)
+            {
+                return (ask + bid) / 2m;
+            }
+
+            if (ask != 0)
+            {
+                return ask;
+            }
+
+            if (bid != 0)
+            {
+                return bid;
+            }
+
+            List<Candle> candles = tab.CandlesAll;
+
+            if (candles != null && candles.Count > 0)
+            {
+                return candles[^1].Close;
+            }
+
+            return 0;
+        }
+
+        private decimal CalculateSpreadPoints(decimal firstPrice, decimal secondPrice, decimal coefficient)
+        {
+            return (firstPrice * coefficient - secondPrice) / coefficient;
+        }
+
+        private decimal CalculateSpreadPercent(decimal firstPrice, decimal secondPrice, decimal coefficient)
+        {
+            if (secondPrice == 0)
+            {
+                return 0;
+            }
+
+            return ((firstPrice * coefficient - secondPrice) / secondPrice) * 100m;
+        }
+
+        private string FormatPrice(decimal price, BotTabSimple tab)
+        {
+            int decimals = 6;
+
+            if (tab != null && tab.Security != null)
+            {
+                decimals = Math.Max(0, tab.Security.Decimals);
+            }
+
+            return price.ToString("N" + decimals, RuCulture);
+        }
+
+        private string FormatMoney(decimal value)
+        {
+            return FormatSignedNumber(value, 2) + " RUB";
+        }
+
+        private string FormatSignedPercent(decimal value)
+        {
+            return FormatSignedNumber(value, 2) + " %";
+        }
+
+        private string FormatSignedInteger(decimal value)
+        {
+            decimal rounded = Math.Round(value, 0, MidpointRounding.AwayFromZero);
+
+            if (rounded > 0)
+            {
+                return "+" + rounded.ToString("N0", RuCulture);
+            }
+
+            return rounded.ToString("N0", RuCulture);
+        }
+
+        private string FormatSignedNumber(decimal value, int decimals)
+        {
+            string format = "N" + decimals;
+
+            if (value > 0)
+            {
+                return "+" + value.ToString(format, RuCulture);
+            }
+
+            return value.ToString(format, RuCulture);
+        }
+
+        private void CreateViewGrid()
+        {
+            if (MainWindow.GetDispatcher.CheckAccess() == false)
+            {
+                MainWindow.GetDispatcher.Invoke(new Action(CreateViewGrid));
+                return;
+            }
+
+            _viewHost = new WindowsFormsHost();
+
+            DataGridView grid = DataGridFactory.GetDataGridView(DataGridViewSelectionMode.CellSelect,
+                DataGridViewAutoSizeRowsMode.AllCells);
+
+            grid.AllowUserToAddRows = false;
+            grid.AllowUserToDeleteRows = false;
+            grid.AllowUserToResizeRows = false;
+            grid.AllowUserToResizeColumns = false;
+            grid.MultiSelect = false;
+            grid.ReadOnly = true;
+            grid.RowHeadersVisible = false;
+            grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
+            grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            grid.ColumnHeadersHeight = 34;
+
+            DataGridViewTextBoxCell cellTemplate = new DataGridViewTextBoxCell();
+            cellTemplate.Style = grid.DefaultCellStyle;
+
+            DataGridViewColumn nameColumn = new DataGridViewColumn();
+            nameColumn.CellTemplate = cellTemplate;
+            nameColumn.HeaderText = "Название параметра";
+            nameColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+            nameColumn.FillWeight = 28;
+            nameColumn.ReadOnly = true;
+            grid.Columns.Add(nameColumn);
+
+            for (int i = 0; i < PairCount; i++)
+            {
+                DataGridViewColumn pairColumn = new DataGridViewColumn();
+                pairColumn.CellTemplate = cellTemplate;
+                pairColumn.HeaderText = _pairLabels[i];
+                pairColumn.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+                pairColumn.FillWeight = 24;
+                pairColumn.ReadOnly = true;
+                grid.Columns.Add(pairColumn);
+            }
+
+            _viewHost.Child = grid;
+            _viewGrid = grid;
+        }
+
+        private void PaintView(ViewMatrix matrix)
+        {
+            if (_viewGrid == null)
+            {
+                return;
+            }
+
+            if (_viewGrid.InvokeRequired)
+            {
+                _viewGrid.Invoke(new Action<ViewMatrix>(PaintView), matrix);
+                return;
+            }
+
+            int currentRow = -1;
+            int currentColumn = -1;
+
+            if (_viewGrid.CurrentCell != null)
+            {
+                currentRow = _viewGrid.CurrentCell.RowIndex;
+                currentColumn = _viewGrid.CurrentCell.ColumnIndex;
+            }
+
+            for (int i = 0; i < PairCount; i++)
+            {
+                _viewGrid.Columns[i + 1].HeaderText = matrix.Headers[i];
+            }
+
+            while (_viewGrid.Rows.Count < matrix.Rows.Count)
+            {
+                DataGridViewRow row = new DataGridViewRow();
+
+                for (int i = 0; i < PairCount + 1; i++)
+                {
+                    row.Cells.Add(new DataGridViewTextBoxCell());
+                }
+
+                _viewGrid.Rows.Add(row);
+            }
+
+            while (_viewGrid.Rows.Count > matrix.Rows.Count)
+            {
+                _viewGrid.Rows.RemoveAt(_viewGrid.Rows.Count - 1);
+            }
+
+            for (int rowIndex = 0; rowIndex < matrix.Rows.Count; rowIndex++)
+            {
+                ViewRow row = matrix.Rows[rowIndex];
+
+                _viewGrid.Rows[rowIndex].Cells[0].Value = row.Name;
+
+                for (int pairIndex = 0; pairIndex < PairCount; pairIndex++)
+                {
+                    DataGridViewCell cell = _viewGrid.Rows[rowIndex].Cells[pairIndex + 1];
+                    cell.Value = row.Values[pairIndex];
+                    cell.Style.ForeColor = row.ValueColors[pairIndex] ?? _viewGrid.DefaultCellStyle.ForeColor;
+                }
+            }
+
+            if (currentRow >= 0
+                && currentColumn >= 0
+                && currentRow < _viewGrid.Rows.Count
+                && currentColumn < _viewGrid.Columns.Count)
+            {
+                _viewGrid.CurrentCell = _viewGrid.Rows[currentRow].Cells[currentColumn];
+            }
+        }
+
+        private class TabState
+        {
+            public bool HasPosition;
+            public bool HasPortfolioPosition;
+            public bool HasEntryPrice;
+            public decimal EntryPrice;
+            public decimal CurrentPrice;
+            public decimal PnlRub;
+            public decimal PositionVolume;
+        }
+
+        private struct EntryAggregation
+        {
+            public decimal TotalVolume;
+            public decimal WeightedEntry;
+        }
+
+        private class PairSnapshot
+        {
+            public PairSnapshot(
+                string instruments,
+                string firstEntryValue,
+                string secondEntryValue,
+                string spreadOpenValue,
+                string currentSpreadValue,
+                Color? currentSpreadColor,
+                string pnlValue,
+                Color? pnlColor,
+                decimal currentPnlRub)
+            {
+                Instruments = instruments;
+                FirstEntryValue = firstEntryValue;
+                SecondEntryValue = secondEntryValue;
+                SpreadOpenValue = spreadOpenValue;
+                CurrentSpreadValue = currentSpreadValue;
+                CurrentSpreadColor = currentSpreadColor;
+                PnlValue = pnlValue;
+                PnlColor = pnlColor;
+                CurrentPnlRub = currentPnlRub;
+            }
+
+            public string Instruments;
+            public string FirstEntryValue;
+            public string SecondEntryValue;
+            public string SpreadOpenValue;
+            public string CurrentSpreadValue;
+            public Color? CurrentSpreadColor;
+            public string PnlValue;
+            public Color? PnlColor;
+            public decimal CurrentPnlRub;
+        }
+
+        private class ViewMatrix
+        {
+            public ViewMatrix(string[] headers, List<ViewRow> rows)
+            {
+                Headers = headers;
+                Rows = rows;
+            }
+
+            public string[] Headers;
+            public List<ViewRow> Rows;
+        }
+
+        private class ViewRow
+        {
+            public ViewRow(string name, string[] values, Color?[] valueColors = null)
+            {
+                Name = name;
+                Values = values;
+                ValueColors = valueColors ?? new Color?[PairCount];
+            }
+
+            public string Name;
+            public string[] Values;
+            public Color?[] ValueColors;
+        }
+    }
+}

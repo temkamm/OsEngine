@@ -16,6 +16,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Forms;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using ComboBox = System.Windows.Controls.ComboBox;
@@ -33,6 +34,7 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
         public SyntheticBondTradeUi(SyntheticBondSeries syntheticBondSeries, ref SyntheticBond syntheticBond)
         {
             InitializeComponent();
+            PreviewMouseDown += SyntheticBondTradeUi_PreviewMouseDown;
 
             _syntheticBondSeries = syntheticBondSeries;
 
@@ -50,8 +52,8 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
             CurrentSpreadLabel.Content = OsLocalization.Trader.Label700 + " (%)";
             MinSpreadLabel.Content = OsLocalization.Trader.Label718 + " (%)";
             MaxSpreadLabel.Content = OsLocalization.Trader.Label719 + " (%)";
-            LabelCointegrationDeviation.Content = OsLocalization.Trader.Label713;
-            LabelCointegrationLookBack.Content = OsLocalization.Trader.Label714;
+            LabelCointegrationDeviation.Content = "Циклов нужно";
+            LabelCointegrationLookBack.Content = "Циклов сделано";
             //LabelContangoLookBack.Content = OsLocalization.Trader.Label716;
             //LabelScenario.Content = OsLocalization.Trader.Label731;
             //CreateScriptButton.Content = OsLocalization.Trader.Label732;
@@ -110,7 +112,7 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
             EnterCurrentVolumeSec2Label.Content = OsLocalization.Trader.Label702;
             StartButton.Content = OsLocalization.Trader.Label455;
             PauseButton.Content = OsLocalization.Trader.Label712;
-            DeleteScenarioButton.Content = OsLocalization.Trader.Label39;
+            DeleteScenarioButton.Content = "Стоп";
             EnterSlippageSec1Label.Content = OsLocalization.Trader.Label715;
             EnterSlippageSec2Label.Content = OsLocalization.Trader.Label715;
             EnterOrderTypeSec1Label.Content = OsLocalization.Trader.Label103;
@@ -197,11 +199,15 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
             TimeShiftTextBox.Text = _syntheticBond.SelectedScenario.ArbitrationIceberg.TimeShift.ToString();
             TimeShiftTextBox.TextChanged += TimeShiftTextBox_TextChanged;
 
-            TextBoxCointegrationDeviation.Text = _syntheticBond.CointegrationBuilder.CointegrationDeviation.ToString();
+            TextBoxCointegrationDeviation.Text = _selectedScenario != null ? _selectedScenario.CyclesCount.ToString() : "0";
             TextBoxCointegrationDeviation.TextChanged += TextBoxCointegrationDeviation_TextChanged;
 
-            TextBoxCointegrationLookBack.Text = _syntheticBond.CointegrationBuilder.CointegrationLookBack.ToString();
+            TextBoxCointegrationLookBack.Text = _selectedScenario != null ? _selectedScenario.CompletedCycles.ToString() : "0";
+            TextBoxCointegrationLookBack.IsReadOnly = true;
             TextBoxCointegrationLookBack.TextChanged += TextBoxCointegrationLookBack_TextChanged;
+
+            InfoMaxQuoteAgeTextBox.Text = _selectedScenario != null ? _selectedScenario.MaxQuoteAgeSeconds.ToString() : "10";
+            InfoMaxQuoteAgeTextBox.TextChanged += InfoMaxQuoteAgeTextBox_TextChanged;
 
             EnterTextBoxAssetPortfolioSec1.Text = _selectedScenario?.ArbitrationIceberg.MainLegs[0].AssetPortfolio ?? string.Empty;
             ExitTextBoxAssetPortfolioSec1.Text = EnterTextBoxAssetPortfolioSec1.Text;
@@ -295,6 +301,10 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
             ValidateLifetimeAndFrequency(EnterOrderTypeSec2ComboBox, EnterLifetimeOrderSec2TextBox, EnterOrderFrequencySec2TextBox);
             ValidateLifetimeAndFrequency(ExitOrderTypeSec1ComboBox, ExitLifetimeOrderSec1TextBox, ExitOrderFrequencySec1TextBox);
             ValidateLifetimeAndFrequency(ExitOrderTypeSec2ComboBox, ExitLifetimeOrderSec2TextBox, ExitOrderFrequencySec2TextBox);
+
+            ValidateSpreadRange();
+            ValidateCyclesCount();
+            UpdateScenarioControlState();
         }
 
         private void SyntheticBondOffsetUi_Closed(object sender, EventArgs e)
@@ -302,6 +312,7 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
             try
             {
                 Closed -= SyntheticBondOffsetUi_Closed;
+                PreviewMouseDown -= SyntheticBondTradeUi_PreviewMouseDown;
 
                 _updateTimer.Stop();
                 _updateTimer.Tick -= UpdateTimer_Tick;
@@ -314,6 +325,7 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
                 //TextBoxContangoLookBack.TextChanged -= TextBoxContangoLookBack_TextChanged;
                 TextBoxCointegrationLookBack.TextChanged -= TextBoxCointegrationLookBack_TextChanged;
                 TextBoxCointegrationDeviation.TextChanged -= TextBoxCointegrationDeviation_TextChanged;
+                InfoMaxQuoteAgeTextBox.TextChanged -= InfoMaxQuoteAgeTextBox_TextChanged;
                 EnterTextBoxAssetPortfolioSec1.TextChanged -= EnterTextBoxAssetPortfolioSec1_TextChanged;
                 EnterTextBoxAssetPortfolioSec2.TextChanged -= EnterTextBoxAssetPortfolioSec2_TextChanged;
                 NonTradePeriodButton.Click -= NonTradePeriodButton_Click;
@@ -425,14 +437,8 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
                 ExitCurrentVolumeSec1TextBox.Text = sec1Volume.ToString();
                 ExitCurrentVolumeSec2TextBox.Text = sec2Volume.ToString();
 
-                if (_syntheticBond.PercentSeparationCandles.Count > 0)
-                {
-                    CurrentSpreadTextBox.Text = _syntheticBond.PercentSeparationCandles[^1].Value.ToString();
-                }
-                else
-                {
-                    CurrentSpreadTextBox.Text = "None";
-                }
+                UpdateCurrentSpreadTextBox();
+                UpdateInfoTab();
 
                 if (_syntheticBond == null ||
                     (_syntheticBond != null &&
@@ -451,16 +457,8 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
                 UpdateTabControlsLockState();
                 UpdatePositionStepsDataGrids();
 
-                if (_selectedScenario.ArbitrationIceberg.CurrentStatus == ArbitrationStatus.On)
-                {
-                    StartButton.Background = Brushes.DarkGreen;
-                    PauseButton.Background = null;
-                }
-                else if (_selectedScenario.ArbitrationIceberg.CurrentStatus == ArbitrationStatus.Pause)
-                {
-                    StartButton.Background = null;
-                    PauseButton.Background = Brushes.DarkOrange;
-                }
+                CompleteLocalStateIfPositionClosed();
+                UpdateScenarioControlState();
 
                 RefreshParametersFromIceberg();
             }
@@ -681,7 +679,14 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
 
         private void UpdateTabControlsLockState()
         {
-            bool isLocked = _selectedScenario?.ArbitrationIceberg?.CurrentStatus == ArbitrationStatus.On;
+            bool isLocked = _selectedScenario?.ArbitrationIceberg?.CurrentStatus == ArbitrationStatus.On
+                || (_selectedScenario != null && _selectedScenario.State != BondScenarioState.Stopped);
+
+            TradeModeComboBox.IsEnabled = !isLocked;
+            MaxSpreadTextBox.IsEnabled = !isLocked;
+            MinSpreadTextBox.IsEnabled = !isLocked;
+            TimeShiftTextBox.IsEnabled = !isLocked;
+            NonTradePeriodButton.IsEnabled = !isLocked;
 
             ExitTextBoxAssetPortfolioSec1.IsEnabled = false;
             ExitTextBoxAssetPortfolioSec2.IsEnabled = false;
@@ -691,6 +696,7 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
             ExitCurrentVolumeSec2TextBox.IsEnabled = false;
             ExitTotalVolumeSec1TextBox.IsEnabled = false;
             ExitTotalVolumeSec2TextBox.IsEnabled = false;
+            TextBoxCointegrationLookBack.IsEnabled = false;
 
             bool enterSec1IsLimit = EnterOrderTypeSec1ComboBox.SelectedIndex == 1;
             bool enterSec2IsLimit = EnterOrderTypeSec2ComboBox.SelectedIndex == 1;
@@ -699,6 +705,7 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
 
             EnterTextBoxAssetPortfolioSec1.IsEnabled = !isLocked;
             EnterTextBoxAssetPortfolioSec2.IsEnabled = !isLocked;
+            TextBoxCointegrationDeviation.IsEnabled = !isLocked;
             EnterVolumeTypeSec1ComboBox.IsEnabled = !isLocked;
             EnterTotalVolumeSec1TextBox.IsEnabled = !isLocked;
             EnterOneOrderSec1TextBox.IsEnabled = !isLocked;
@@ -1197,14 +1204,231 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
             }
         }
 
+        private void UpdateCurrentSpreadTextBox()
+        {
+            if ((DateTime.Now - _lastCurrentSpreadUiUpdate).TotalSeconds < CurrentSpreadUiUpdateSeconds)
+            {
+                return;
+            }
+
+            _lastCurrentSpreadUiUpdate = DateTime.Now;
+
+            if (_selectedScenario != null
+                && _selectedScenario.TryGetCurrentBidAskSpread(out decimal bidAskSpread))
+            {
+                CurrentSpreadTextBox.Text = bidAskSpread.ToString("0.##");
+                return;
+            }
+
+            if (_syntheticBond.PercentSeparationCandles.Count > 0)
+            {
+                CurrentSpreadTextBox.Text = _syntheticBond.PercentSeparationCandles[^1].Value.ToString("0.##");
+            }
+            else
+            {
+                CurrentSpreadTextBox.Text = "None";
+            }
+        }
+
+        private void UpdateInfoTab()
+        {
+            if (_selectedScenario == null
+                || _selectedScenario.ArbitrationIceberg == null
+                || _selectedScenario.ArbitrationIceberg.MainLegs == null
+                || _selectedScenario.ArbitrationIceberg.MainLegs.Count == 0
+                || _selectedScenario.ArbitrationIceberg.SecondaryLegs == null
+                || _selectedScenario.ArbitrationIceberg.SecondaryLegs.Count == 0)
+            {
+                return;
+            }
+
+            UpdateLegInfo(
+                _selectedScenario.ArbitrationIceberg.MainLegs[0].BotTab,
+                InfoBaseSecurityTextBox,
+                InfoBaseSpreadPointsTextBox,
+                InfoBaseSpreadPercentTextBox,
+                InfoBaseBidTextBox,
+                InfoBaseAskTextBox);
+
+            UpdateLegInfo(
+                _selectedScenario.ArbitrationIceberg.SecondaryLegs[0].BotTab,
+                InfoFuturesSecurityTextBox,
+                InfoFuturesSpreadPointsTextBox,
+                InfoFuturesSpreadPercentTextBox,
+                InfoFuturesBidTextBox,
+                InfoFuturesAskTextBox);
+
+            UpdateInfoQuoteColors();
+        }
+
+        private void UpdateLegInfo(
+            BotTabSimple tab,
+            TextBox securityTextBox,
+            TextBox spreadPointsTextBox,
+            TextBox spreadPercentTextBox,
+            TextBox bidTextBox,
+            TextBox askTextBox)
+        {
+            if (tab == null)
+            {
+                securityTextBox.Text = "None";
+                spreadPointsTextBox.Text = "None";
+                spreadPercentTextBox.Text = "None";
+                bidTextBox.Text = "None";
+                askTextBox.Text = "None";
+                return;
+            }
+
+            securityTextBox.Text = tab.Connector != null && !string.IsNullOrEmpty(tab.Connector.SecurityName)
+                ? tab.Connector.SecurityName
+                : "None";
+
+            decimal bid = tab.PriceBestBid;
+            decimal ask = tab.PriceBestAsk;
+
+            bidTextBox.Text = bid > 0 ? bid.ToString() : "None";
+            askTextBox.Text = ask > 0 ? ask.ToString() : "None";
+
+            if (bid <= 0 || ask <= 0)
+            {
+                spreadPointsTextBox.Text = "None";
+                spreadPercentTextBox.Text = "None";
+                return;
+            }
+
+            decimal spreadPoints = ask - bid;
+            decimal spreadPercent = spreadPoints / bid * 100;
+
+            spreadPointsTextBox.Text = spreadPoints.ToString();
+            spreadPercentTextBox.Text = spreadPercent.ToString("0.##");
+        }
+
+        private void UpdateInfoQuoteColors()
+        {
+            InfoBaseAskTextBox.ClearValue(TextBox.ForegroundProperty);
+            InfoBaseBidTextBox.ClearValue(TextBox.ForegroundProperty);
+            InfoFuturesAskTextBox.ClearValue(TextBox.ForegroundProperty);
+            InfoFuturesBidTextBox.ClearValue(TextBox.ForegroundProperty);
+
+            if (_selectedScenario?.ArbitrationIceberg == null)
+            {
+                return;
+            }
+
+            ArbitrationMode mode = _selectedScenario.ArbitrationIceberg.CurrentMode;
+
+            if (mode == ArbitrationMode.OpenBuyFirstSellSecond)
+            {
+                InfoBaseAskTextBox.Foreground = Brushes.DodgerBlue;
+                InfoFuturesBidTextBox.Foreground = Brushes.Red;
+                return;
+            }
+
+            if (mode == ArbitrationMode.OpenSellFirstBuySecond)
+            {
+                InfoBaseBidTextBox.Foreground = Brushes.Red;
+                InfoFuturesAskTextBox.Foreground = Brushes.DodgerBlue;
+            }
+        }
+
         #endregion
 
         #region Helpers
+
+        private void SyntheticBondTradeUi_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.OriginalSource is DependencyObject source
+                && !IsInputControl(source))
+            {
+                Keyboard.ClearFocus();
+                ApplyScenarioTextInputs();
+            }
+        }
+
+        private bool IsInputControl(DependencyObject source)
+        {
+            while (source != null)
+            {
+                if (source is TextBox
+                    || source is ComboBox
+                    || source is ComboBoxItem
+                    || source is System.Windows.Controls.Button)
+                {
+                    return true;
+                }
+
+                source = VisualTreeHelper.GetParent(source);
+            }
+
+            return false;
+        }
+
+        private bool ApplyScenarioTextInputs()
+        {
+            if (_isUpdatingUi || _selectedScenario == null)
+            {
+                return false;
+            }
+
+            bool isValid = true;
+
+            if (decimal.TryParse(MaxSpreadTextBox.Text.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out decimal maxSpread))
+            {
+                _selectedScenario.MaxSpread = maxSpread;
+            }
+            else
+            {
+                MaxSpreadTextBox.Foreground = Brushes.Red;
+                isValid = false;
+            }
+
+            if (decimal.TryParse(MinSpreadTextBox.Text.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out decimal minSpread))
+            {
+                _selectedScenario.MinSpread = minSpread;
+            }
+            else
+            {
+                MinSpreadTextBox.Foreground = Brushes.Red;
+                isValid = false;
+            }
+
+            if (int.TryParse(TextBoxCointegrationDeviation.Text, out int cyclesCount))
+            {
+                _selectedScenario.CyclesCount = cyclesCount;
+            }
+            else
+            {
+                TextBoxCointegrationDeviation.Foreground = Brushes.Red;
+                isValid = false;
+            }
+
+            if (int.TryParse(InfoMaxQuoteAgeTextBox.Text, out int maxQuoteAgeSeconds)
+                && maxQuoteAgeSeconds >= 0)
+            {
+                _selectedScenario.MaxQuoteAgeSeconds = maxQuoteAgeSeconds;
+            }
+            else
+            {
+                InfoMaxQuoteAgeTextBox.Foreground = Brushes.Red;
+                isValid = false;
+            }
+
+            isValid = ValidateSpreadRange() && ValidateCyclesCount() && isValid;
+
+            if (isValid)
+            {
+                _selectedScenario.Save();
+            }
+
+            return isValid;
+        }
 
         private void ClearAllValidationStyles()
         {
             MaxSpreadTextBox.ClearValue(TextBox.ForegroundProperty);
             MinSpreadTextBox.ClearValue(TextBox.ForegroundProperty);
+            TextBoxCointegrationDeviation.ClearValue(TextBox.ForegroundProperty);
+            InfoMaxQuoteAgeTextBox.ClearValue(TextBox.ForegroundProperty);
             EnterTotalVolumeSec1TextBox.ClearValue(TextBox.ForegroundProperty);
             EnterTotalVolumeSec2TextBox.ClearValue(TextBox.ForegroundProperty);
             EnterOneOrderSec1TextBox.ClearValue(TextBox.ForegroundProperty);
@@ -1334,10 +1558,15 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
 
         private bool CheckAllParametersValid()
         {
+            if (!ValidateSpreadRange() || !ValidateCyclesCount())
+            {
+                return false;
+            }
+
             TextBox[] textBoxesToCheck = new TextBox[]
             {
                 MaxSpreadTextBox, MinSpreadTextBox,
-                //TextBoxContangoLookBack, TextBoxCointegrationDeviation, TextBoxCointegrationLookBack,
+                TextBoxCointegrationDeviation,
                 EnterTotalVolumeSec1TextBox, EnterTotalVolumeSec2TextBox,
                 EnterOneOrderSec1TextBox, EnterOneOrderSec2TextBox,
                 ExitOneOrderSec1TextBox, ExitOneOrderSec2TextBox,
@@ -1358,6 +1587,217 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
             }
 
             return true;
+        }
+
+        private bool ValidateSpreadRange()
+        {
+            if (!decimal.TryParse(MaxSpreadTextBox.Text.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out decimal maxSpread)
+                || !decimal.TryParse(MinSpreadTextBox.Text.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out decimal minSpread))
+            {
+                MaxSpreadTextBox.Foreground = Brushes.Red;
+                MinSpreadTextBox.Foreground = Brushes.Red;
+                return false;
+            }
+
+            if (maxSpread <= minSpread)
+            {
+                MaxSpreadTextBox.Foreground = Brushes.Red;
+                MinSpreadTextBox.Foreground = Brushes.Red;
+                return false;
+            }
+
+            MaxSpreadTextBox.ClearValue(TextBox.ForegroundProperty);
+            MinSpreadTextBox.ClearValue(TextBox.ForegroundProperty);
+            return true;
+        }
+
+        private bool ValidateCyclesCount()
+        {
+            if (!int.TryParse(TextBoxCointegrationDeviation.Text, out int cyclesCount)
+                || cyclesCount <= 0)
+            {
+                TextBoxCointegrationDeviation.Foreground = Brushes.Red;
+                return false;
+            }
+
+            TextBoxCointegrationDeviation.ClearValue(TextBox.ForegroundProperty);
+            return true;
+        }
+
+        private void SetScenarioState(BondScenarioState state, string logMessage)
+        {
+            if (_selectedScenario == null)
+            {
+                return;
+            }
+
+            if (_selectedScenario.State == state)
+            {
+                UpdateScenarioControlState();
+                return;
+            }
+
+            _selectedScenario.State = state;
+            _selectedScenario.Save();
+
+            if (!string.IsNullOrEmpty(logMessage))
+            {
+                AddLogMessage(logMessage, LogMessageType.System);
+                ServerMaster.SendNewLogMessage(logMessage, Logging.LogMessageType.System);
+            }
+
+            UpdateTabControlsLockState();
+            UpdateScenarioControlState();
+        }
+
+        private bool IsOpenTradeMode(ArbitrationMode mode)
+        {
+            return mode == ArbitrationMode.OpenBuyFirstSellSecond
+                || mode == ArbitrationMode.OpenSellFirstBuySecond;
+        }
+
+        private bool IsCyclesLimitReached(BondScenario scenario)
+        {
+            return scenario != null
+                && scenario.CyclesCount > 0
+                && scenario.CompletedCycles >= scenario.CyclesCount;
+        }
+
+        private void CompleteLocalStateIfPositionClosed()
+        {
+            if (_selectedScenario == null
+                || (_selectedScenario.State != BondScenarioState.PauseOnlyClose
+                    && _selectedScenario.State != BondScenarioState.StoppingNow)
+                || HasScenarioOpenPosition(_selectedScenario))
+            {
+                return;
+            }
+
+            SetScenarioState(
+                BondScenarioState.Stopped,
+                "Сценарий \"" + _selectedScenario.ScriptName + "\": позиция закрыта, состояние Stopped");
+        }
+
+        private void UpdateScenarioControlState()
+        {
+            if (_selectedScenario == null)
+            {
+                return;
+            }
+
+            StartButton.ClearValue(System.Windows.Controls.Control.BackgroundProperty);
+            PauseButton.ClearValue(System.Windows.Controls.Control.BackgroundProperty);
+            DeleteScenarioButton.ClearValue(System.Windows.Controls.Control.BackgroundProperty);
+            DeleteScenarioButton.ClearValue(System.Windows.Controls.Control.ForegroundProperty);
+
+            bool hasOpenPosition = HasScenarioOpenPosition(_selectedScenario);
+
+            StartButton.IsEnabled = _selectedScenario.State == BondScenarioState.Stopped;
+            PauseButton.IsEnabled = _selectedScenario.State == BondScenarioState.Running;
+            DeleteScenarioButton.IsEnabled = _selectedScenario.State != BondScenarioState.Stopped || hasOpenPosition;
+
+            if (_selectedScenario.State == BondScenarioState.Stopped)
+            {
+                StartButton.Background = Brushes.DarkGreen;
+                StartButton.Foreground = Brushes.White;
+            }
+            else
+            {
+                StartButton.ClearValue(System.Windows.Controls.Control.ForegroundProperty);
+            }
+
+            if (_selectedScenario.State == BondScenarioState.Running)
+            {
+                PauseButton.Background = Brushes.LightGoldenrodYellow;
+                DeleteScenarioButton.Background = Brushes.LightCoral;
+            }
+            else if (_selectedScenario.State == BondScenarioState.PauseOnlyClose)
+            {
+                PauseButton.Background = Brushes.Gold;
+            }
+            else if (_selectedScenario.State == BondScenarioState.StoppingNow)
+            {
+                DeleteScenarioButton.Background = Brushes.DarkRed;
+                DeleteScenarioButton.Foreground = Brushes.White;
+            }
+
+            TextBoxCointegrationLookBack.Text = _selectedScenario.CompletedCycles.ToString();
+        }
+
+        private bool HasScenarioOpenPosition(BondScenario scenario)
+        {
+            if (scenario == null || scenario.ArbitrationIceberg == null)
+            {
+                return false;
+            }
+
+            return HasOpenPositionInLegs(scenario.ArbitrationIceberg.MainLegs)
+                || HasOpenPositionInLegs(scenario.ArbitrationIceberg.SecondaryLegs);
+        }
+
+        private bool HasOpenPositionInLegs(List<ArbitrationLeg> legs)
+        {
+            if (legs == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < legs.Count; i++)
+            {
+                ArbitrationLeg leg = legs[i];
+                if (leg?.BotTab?.PositionsOpenAll == null)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < leg.BotTab.PositionsOpenAll.Count; j++)
+                {
+                    Position position = leg.BotTab.PositionsOpenAll[j];
+                    if (position != null && position.OpenVolume > 0)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private void CloseScenarioAtMarket(BondScenario scenario)
+        {
+            if (scenario?.ArbitrationIceberg == null)
+            {
+                return;
+            }
+
+            CloseLegsAtMarket(scenario.ArbitrationIceberg.MainLegs);
+            CloseLegsAtMarket(scenario.ArbitrationIceberg.SecondaryLegs);
+        }
+
+        private void CloseLegsAtMarket(List<ArbitrationLeg> legs)
+        {
+            if (legs == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < legs.Count; i++)
+            {
+                ArbitrationLeg leg = legs[i];
+                if (leg?.BotTab?.PositionsOpenAll == null)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < leg.BotTab.PositionsOpenAll.Count; j++)
+                {
+                    Position position = leg.BotTab.PositionsOpenAll[j];
+                    if (position != null && position.OpenVolume > 0)
+                    {
+                        leg.BotTab.CloseAtMarket(position, position.OpenVolume);
+                    }
+                }
+            }
         }
 
         #endregion
@@ -1382,6 +1822,37 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
                 }
 
                 _selectedScenario.ArbitrationIceberg.TimeShift = result;
+            }
+            catch (Exception ex)
+            {
+                ServerMaster.SendNewLogMessage(ex.ToString(), Logging.LogMessageType.Error);
+            }
+        }
+
+        private void InfoMaxQuoteAgeTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            try
+            {
+                if (_isUpdatingUi || _selectedScenario == null)
+                {
+                    return;
+                }
+
+                if (string.IsNullOrEmpty(InfoMaxQuoteAgeTextBox.Text))
+                {
+                    return;
+                }
+
+                if (!int.TryParse(InfoMaxQuoteAgeTextBox.Text, out int result)
+                    || result < 0)
+                {
+                    InfoMaxQuoteAgeTextBox.Foreground = Brushes.Red;
+                    return;
+                }
+
+                InfoMaxQuoteAgeTextBox.ClearValue(TextBox.ForegroundProperty);
+                _selectedScenario.MaxQuoteAgeSeconds = result;
+                _selectedScenario.Save();
             }
             catch (Exception ex)
             {
@@ -1466,7 +1937,7 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
         {
             try
             {
-                if (string.IsNullOrEmpty(TextBoxCointegrationLookBack.Text))
+                if (_isUpdatingUi || string.IsNullOrEmpty(TextBoxCointegrationLookBack.Text))
                 {
                     return;
                 }
@@ -1477,7 +1948,11 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
                     return;
                 }
 
-                _syntheticBond.CointegrationBuilder.CointegrationLookBack = result;
+                if (_selectedScenario != null)
+                {
+                    _selectedScenario.CompletedCycles = result;
+                    _selectedScenario.Save();
+                }
             }
             catch (Exception ex)
             {
@@ -1489,18 +1964,25 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
         {
             try
             {
-                if (string.IsNullOrEmpty(TextBoxCointegrationDeviation.Text))
+                if (_isUpdatingUi || string.IsNullOrEmpty(TextBoxCointegrationDeviation.Text))
                 {
                     return;
                 }
 
-                decimal result;
-                if (!TryParseDecimal(TextBoxCointegrationDeviation, out result))
+                if (!TryParseInt(TextBoxCointegrationDeviation, out int result)
+                    || result <= 0)
                 {
+                    TextBoxCointegrationDeviation.Foreground = Brushes.Red;
                     return;
                 }
 
-                _syntheticBond.CointegrationBuilder.CointegrationDeviation = result;
+                TextBoxCointegrationDeviation.ClearValue(TextBox.ForegroundProperty);
+
+                if (_selectedScenario != null)
+                {
+                    _selectedScenario.CyclesCount = result;
+                    _selectedScenario.Save();
+                }
             }
             catch (Exception ex)
             {
@@ -2490,14 +2972,26 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
         {
             try
             {
-                if (_selectedScenario.ArbitrationIceberg.CurrentStatus == ArbitrationStatus.On)
+                if (_selectedScenario == null)
                 {
                     return;
                 }
 
+                ApplyScenarioTextInputs();
+
                 if (!CheckAllParametersValid())
                 {
-                    string message = "Параметры настроек содержат ошибки. Торговля невозможна.";
+                    string message = "Сценарий \"" + _selectedScenario.ScriptName
+                        + "\": старт отклонён. Проверьте параметры: MaxSpread должен быть больше MinSpread, а циклов нужно больше 0.";
+                    AddLogMessage(message, LogMessageType.System);
+                    ServerMaster.SendNewLogMessage(message, Logging.LogMessageType.Error);
+                    return;
+                }
+
+                if (!IsOpenTradeMode(_selectedScenario.ArbitrationIceberg.CurrentMode))
+                {
+                    string message = "Сценарий \"" + _selectedScenario.ScriptName
+                        + "\": старт отклонён. Выберите режим входа в позицию.";
                     AddLogMessage(message, LogMessageType.System);
                     ServerMaster.SendNewLogMessage(message, Logging.LogMessageType.Error);
                     return;
@@ -2511,10 +3005,18 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
                     return;
                 }
 
-                StartButton.Background = Brushes.DarkGreen;
-                PauseButton.Background = null;
+                if (IsCyclesLimitReached(_selectedScenario))
+                {
+                    string message = "Сценарий \"" + _selectedScenario.ScriptName
+                        + "\": старт отклонён, лимит циклов уже достигнут.";
+                    AddLogMessage(message, LogMessageType.System);
+                    ServerMaster.SendNewLogMessage(message, Logging.LogMessageType.Error);
+                    return;
+                }
 
-                _selectedScenario.ArbitrationIceberg.Start(_selectedScenario.ArbitrationIceberg.CurrentMode);
+                SetScenarioState(
+                    BondScenarioState.Running,
+                    "Сценарий \"" + _selectedScenario.ScriptName + "\": включён режим Running");
             }
             catch (Exception ex)
             {
@@ -2526,27 +3028,16 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
         {
             try
             {
-                if (_selectedScenario.ArbitrationIceberg.CurrentStatus == ArbitrationStatus.Pause)
+                if (_selectedScenario == null
+                    || _selectedScenario.State == BondScenarioState.PauseOnlyClose
+                    || _selectedScenario.State == BondScenarioState.StoppingNow)
                 {
                     return;
                 }
 
-                if (!CheckAllParametersValid())
-                {
-                    ServerMaster.SendNewLogMessage("Параметры настроек содержат ошибки. Торговля невозможна.", Logging.LogMessageType.Error);
-                    return;
-                }
-
-                if (_selectedScenario.ArbitrationIceberg.CheckTradingReady() == false)
-                {
-                    ServerMaster.SendNewLogMessage("Синтетическая облигация не готова к торговле", Logging.LogMessageType.Error);
-                    return;
-                }
-
-                StartButton.Background = null;
-                PauseButton.Background = Brushes.DarkOrange;
-
-                _selectedScenario.ArbitrationIceberg.CurrentStatus = ArbitrationStatus.Pause;
+                SetScenarioState(
+                    BondScenarioState.PauseOnlyClose,
+                    "Сценарий \"" + _selectedScenario.ScriptName + "\": включён режим PauseOnlyClose");
             }
             catch (Exception ex)
             {
@@ -2563,53 +3054,23 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
                     return;
                 }
 
-                if (_selectedScenario.ArbitrationIceberg.CurrentStatus == ArbitrationStatus.On)
-                {
-                    ServerMaster.SendNewLogMessage(
-                        "Невозможно удалить активный сценарий. Сначала остановите торговлю.",
-                        Logging.LogMessageType.Error);
-                    return;
-                }
-
-                AcceptDialogUi acceptDialog = new AcceptDialogUi(OsLocalization.Trader.Label734);
-                acceptDialog.ShowDialog();
-
-                if (acceptDialog.UserAcceptAction == false)
+                if (_selectedScenario.State == BondScenarioState.StoppingNow)
                 {
                     return;
                 }
 
-                BondScenario scenarioToDelete = _selectedScenario;
-
-                for (int i = 0; i < _syntheticBond.ActiveScenarios.Count; i++)
+                if (HasScenarioOpenPosition(_selectedScenario))
                 {
-                    if (scenarioToDelete.ScenarioNumber == _syntheticBond.ActiveScenarios[i].ScenarioNumber)
-                    {
-                        _syntheticBond.ActiveScenarios.RemoveAt(i);
-                        break;
-                    }
+                    CloseScenarioAtMarket(_selectedScenario);
+                    SetScenarioState(
+                        BondScenarioState.StoppingNow,
+                        "Сценарий \"" + _selectedScenario.ScriptName + "\": запущен аварийный Stop по Market");
+                    return;
                 }
 
-                _syntheticBond.DeletedScenarios.Add(scenarioToDelete);
-
-                if (_syntheticBond.ActiveScenarios.Count == 0)
-                {
-                    int number = _syntheticBond.GetAvailableScenarioNumber();
-                    BondScenario scenario = _syntheticBond.CreateNewScenario("Script " + number);
-                    scenario.IsActiveScenario = true;
-                    _syntheticBond.SelectedScenario = scenario;
-                }
-                else
-                {
-                    _syntheticBond.ActiveScenarios[0].IsActiveScenario = true;
-                    _selectedScenario = _syntheticBond.ActiveScenarios[0];
-                }
-
-                CreateScenarioComboBox();
-
-                UpdateScenarioTextBoxDefault();
-
-                _syntheticBond.Save();
+                SetScenarioState(
+                    BondScenarioState.Stopped,
+                    "Сценарий \"" + _selectedScenario.ScriptName + "\": остановлен, открытых позиций нет");
             }
             catch (Exception ex)
             {
@@ -2682,6 +3143,10 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
         private bool _isUpdatingUi;
 
         private DispatcherTimer _updateTimer;
+
+        private const double CurrentSpreadUiUpdateSeconds = 1;
+
+        private DateTime _lastCurrentSpreadUiUpdate = DateTime.MinValue;
 
         private DataGridView _gridOpenStepsBase;
 
@@ -2762,6 +3227,9 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
 
             MaxSpreadTextBox.Text = _selectedScenario.MaxSpread.ToString();
             MinSpreadTextBox.Text = _selectedScenario.MinSpread.ToString();
+            InfoMaxQuoteAgeTextBox.Text = _selectedScenario.MaxQuoteAgeSeconds.ToString();
+            TextBoxCointegrationDeviation.Text = _selectedScenario.CyclesCount.ToString();
+            TextBoxCointegrationLookBack.Text = _selectedScenario.CompletedCycles.ToString();
 
             EnterTotalVolumeSec1TextBox.Text = _selectedScenario.ArbitrationIceberg.MainLegs[0].TotalVolume.ToString();
             ExitTotalVolumeSec1TextBox.Text = EnterTotalVolumeSec1TextBox.Text;
@@ -2809,6 +3277,7 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
             CreateExitOrderPositionSec2ComboBox();
 
             UpdateTabControlsLockState();
+            UpdateScenarioControlState();
 
             ValidatePositiveValue(EnterTotalVolumeSec1TextBox);
             ValidatePositiveValue(EnterTotalVolumeSec2TextBox);
@@ -2823,6 +3292,9 @@ namespace OsEngine.OsTrader.Panels.Tab.SynteticBondTab
             ValidateLifetimeAndFrequency(EnterOrderTypeSec2ComboBox, EnterLifetimeOrderSec2TextBox, EnterOrderFrequencySec2TextBox);
             ValidateLifetimeAndFrequency(ExitOrderTypeSec1ComboBox, ExitLifetimeOrderSec1TextBox, ExitOrderFrequencySec1TextBox);
             ValidateLifetimeAndFrequency(ExitOrderTypeSec2ComboBox, ExitLifetimeOrderSec2TextBox, ExitOrderFrequencySec2TextBox);
+
+            ValidateSpreadRange();
+            ValidateCyclesCount();
 
             UpdatePositionStepsDataGrids();
 

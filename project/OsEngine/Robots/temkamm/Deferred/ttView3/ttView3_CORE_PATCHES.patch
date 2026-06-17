@@ -1,0 +1,121 @@
+diff --git a/project/OsEngine/Entity/Portfolio.cs b/project/OsEngine/Entity/Portfolio.cs
+index 44b865916..8a341d28d 100644
+--- a/project/OsEngine/Entity/Portfolio.cs
++++ b/project/OsEngine/Entity/Portfolio.cs
+@@ -86,6 +86,7 @@ namespace OsEngine.Entity
+                         currentPosition.ValueCurrent = position.ValueCurrent;
+                         currentPosition.ValueBlocked = position.ValueBlocked;
+                         currentPosition.UnrealizedPnl = position.UnrealizedPnl;
++                        currentPosition.EntryPrice = position.EntryPrice;
+ 
+                         return;
+                     }
+@@ -171,4 +172,4 @@ namespace OsEngine.Entity
+             PositionOnBoard = new List<PositionOnBoard>();
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/project/OsEngine/Entity/PositionOnBoard.cs b/project/OsEngine/Entity/PositionOnBoard.cs
+index f9ce2ced6..20e96c28d 100644
+--- a/project/OsEngine/Entity/PositionOnBoard.cs
++++ b/project/OsEngine/Entity/PositionOnBoard.cs
+@@ -30,6 +30,11 @@ namespace OsEngine.Entity
+         /// </summary>
+         public decimal UnrealizedPnl;
+ 
++        /// <summary>
++        /// Average entry price received from broker/exchange
++        /// </summary>
++        public decimal EntryPrice;
++
+         /// <summary>
+         /// Portfolio 
+         /// </summary>
+diff --git a/project/OsEngine/Entity/StrategyParametersUi.xaml.cs b/project/OsEngine/Entity/StrategyParametersUi.xaml.cs
+index 72a9073f7..b84001e44 100644
+--- a/project/OsEngine/Entity/StrategyParametersUi.xaml.cs
++++ b/project/OsEngine/Entity/StrategyParametersUi.xaml.cs
+@@ -63,6 +63,14 @@ namespace OsEngine.Entity
+ 
+             List<List<IIStrategyParameter>> sorted = GetParamSortedByTabName();
+ 
++            if (settings.CustomTabsFirst)
++            {
++                for (int i = 0; i < settings.CustomTabs.Count; i++)
++                {
++                    CreateCustomTab(settings.CustomTabs[i]);
++                }
++            }
++
+             for (int i = 0; i < sorted.Count; i++)
+             {
+                 if (sorted[i][0].TabName == null)
+@@ -75,9 +83,12 @@ namespace OsEngine.Entity
+                 }
+             }
+ 
+-            for (int i = 0; i < settings.CustomTabs.Count; i++)
++            if (settings.CustomTabsFirst == false)
+             {
+-                CreateCustomTab(settings.CustomTabs[i]);
++                for (int i = 0; i < settings.CustomTabs.Count; i++)
++                {
++                    CreateCustomTab(settings.CustomTabs[i]);
++                }
+             }
+ 
+             RePaintParameterTablesAsync();
+@@ -1139,4 +1150,4 @@ namespace OsEngine.Entity
+ 
+         public event Action<string> ErrorEvent;
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/project/OsEngine/Market/Servers/Alor/AlorServer.cs b/project/OsEngine/Market/Servers/Alor/AlorServer.cs
+index 783e0896c..a2d97767a 100644
+--- a/project/OsEngine/Market/Servers/Alor/AlorServer.cs
++++ b/project/OsEngine/Market/Servers/Alor/AlorServer.cs
+@@ -2042,11 +2042,12 @@ namespace OsEngine.Market.Servers.Alor
+ 
+             PositionOnBoard newPos = new PositionOnBoard();
+             newPos.PortfolioName = portf.Number;
+-            newPos.ValueCurrent = baseMessage.qty.ToDecimal();
+-            newPos.SecurityNameCode = baseMessage.symbol;
+-            newPos.UnrealizedPnl = baseMessage.dailyUnrealisedPl.ToDecimal();
+-
+-            portf.SetNewPosition(newPos);
++            newPos.ValueCurrent = baseMessage.qty.ToDecimal();
++            newPos.SecurityNameCode = baseMessage.symbol;
++            newPos.UnrealizedPnl = baseMessage.dailyUnrealisedPl.ToDecimal();
++            newPos.EntryPrice = baseMessage.avgPrice.ToDecimal();
++
++            portf.SetNewPosition(newPos);
+ 
+             if (PortfolioEvent != null)
+             {
+@@ -3300,4 +3301,4 @@ namespace OsEngine.Market.Servers.Alor
+         Orders,
+         MyTrades
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/project/OsEngine/OsTrader/Panels/BotPanel.cs b/project/OsEngine/OsTrader/Panels/BotPanel.cs
+index 050dc2072..3dbf704fa 100644
+--- a/project/OsEngine/OsTrader/Panels/BotPanel.cs
++++ b/project/OsEngine/OsTrader/Panels/BotPanel.cs
+@@ -2636,6 +2636,11 @@ position => position.State != PositionStateType.OpeningFail
+         /// </summary>
+         public List<CustomTabToParametersUi> CustomTabs = new List<CustomTabToParametersUi>();
+ 
++        /// <summary>
++        /// draw custom tabs before regular parameter tabs
++        /// </summary>
++        public bool CustomTabsFirst = false;
++
+         /// <summary>
+         /// create a tab for the options window
+         /// </summary>

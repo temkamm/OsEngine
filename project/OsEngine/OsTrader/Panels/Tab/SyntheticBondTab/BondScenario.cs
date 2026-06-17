@@ -12,6 +12,14 @@ using System.IO;
 
 namespace OsEngine.OsTrader.Panels.Tab.SyntheticBondTab
 {
+    public enum BondScenarioState
+    {
+        Stopped,
+        Running,
+        PauseOnlyClose,
+        StoppingNow
+    }
+
     public class BondScenario
     {
         #region Constructor
@@ -48,6 +56,8 @@ namespace OsEngine.OsTrader.Panels.Tab.SyntheticBondTab
 
             ArbitrationIceberg.AllPositionsFilledEvent += OnAllPositionsFilled;
             ArbitrationIceberg.AllPositionsClosedEvent += OnAllPositionsClosed;
+
+            RestoreSafeStateAfterLoad();
         }
 
         private void LoadBondScenario()
@@ -66,6 +76,35 @@ namespace OsEngine.OsTrader.Panels.Tab.SyntheticBondTab
 
                 ArbitrationIceberg = new ArbitrationIceberg(reader.ReadLine(), StartProgram);
                 NonTradePeriods = new NonTradePeriods(reader.ReadLine());
+
+                string stateLine = reader.ReadLine();
+                if (!string.IsNullOrEmpty(stateLine)
+                    && Enum.TryParse(stateLine, out BondScenarioState loadedState))
+                {
+                    State = loadedState;
+                }
+
+                string cyclesCountLine = reader.ReadLine();
+                if (!string.IsNullOrEmpty(cyclesCountLine)
+                    && int.TryParse(cyclesCountLine, out int cyclesCount))
+                {
+                    CyclesCount = cyclesCount;
+                }
+
+                string completedCyclesLine = reader.ReadLine();
+                if (!string.IsNullOrEmpty(completedCyclesLine)
+                    && int.TryParse(completedCyclesLine, out int completedCycles))
+                {
+                    CompletedCycles = completedCycles;
+                }
+
+                string maxQuoteAgeSecondsLine = reader.ReadLine();
+                if (!string.IsNullOrEmpty(maxQuoteAgeSecondsLine)
+                    && int.TryParse(maxQuoteAgeSecondsLine, out int maxQuoteAgeSeconds)
+                    && maxQuoteAgeSeconds >= 0)
+                {
+                    MaxQuoteAgeSeconds = maxQuoteAgeSeconds;
+                }
             }
         }
 
@@ -79,6 +118,10 @@ namespace OsEngine.OsTrader.Panels.Tab.SyntheticBondTab
                 writer.WriteLine(ScriptName.ToString());
                 writer.WriteLine(ArbitrationIceberg.UniqueName.ToString());
                 writer.WriteLine(NonTradePeriods.NameUnique.ToString());
+                writer.WriteLine(State.ToString());
+                writer.WriteLine(CyclesCount.ToString());
+                writer.WriteLine(CompletedCycles.ToString());
+                writer.WriteLine(MaxQuoteAgeSeconds.ToString());
 
                 ArbitrationIceberg.Save();
                 NonTradePeriods.Save();
@@ -128,6 +171,97 @@ namespace OsEngine.OsTrader.Panels.Tab.SyntheticBondTab
             }
         }
 
+        private void RestoreSafeStateAfterLoad()
+        {
+            BondScenarioState stateBefore = State;
+            bool hasPosition = HasActivePosition();
+
+            if (State == BondScenarioState.PauseOnlyClose && !hasPosition)
+            {
+                State = BondScenarioState.Stopped;
+            }
+            else if (State == BondScenarioState.StoppingNow)
+            {
+                State = hasPosition
+                    ? BondScenarioState.PauseOnlyClose
+                    : BondScenarioState.Stopped;
+            }
+
+            if (stateBefore != State)
+            {
+                ServerMaster.SendNewLogMessage(
+                    "Scenario " + ScriptName + ": restored state after restart. "
+                    + stateBefore + " -> " + State,
+                    LogMessageType.System);
+
+                Save();
+            }
+        }
+
+        public bool HasActivePosition()
+        {
+            if (ArbitrationIceberg == null)
+            {
+                return false;
+            }
+
+            if (HasActivePositionInLegs(ArbitrationIceberg.MainLegs))
+            {
+                return true;
+            }
+
+            return HasActivePositionInLegs(ArbitrationIceberg.SecondaryLegs);
+        }
+
+        public void SetCurrentBidAskSpread(decimal spread)
+        {
+            lock (_runtimeDataLocker)
+            {
+                _currentBidAskSpread = spread;
+                _hasCurrentBidAskSpread = true;
+            }
+        }
+
+        public bool TryGetCurrentBidAskSpread(out decimal spread)
+        {
+            lock (_runtimeDataLocker)
+            {
+                spread = _currentBidAskSpread;
+                return _hasCurrentBidAskSpread;
+            }
+        }
+
+        private bool HasActivePositionInLegs(System.Collections.Generic.List<ArbitrationLeg> legs)
+        {
+            if (legs == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < legs.Count; i++)
+            {
+                ArbitrationLeg leg = legs[i];
+
+                if (leg == null
+                    || leg.ArbitrationLegStatistic == null
+                    || leg.ArbitrationLegStatistic.CurrentPosition == null)
+                {
+                    continue;
+                }
+
+                Position position = leg.ArbitrationLegStatistic.CurrentPosition;
+
+                if (position.State != PositionStateType.Done
+                    && position.State != PositionStateType.OpeningFail
+                    && position.OpenVolume > 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         #endregion
 
         #region Public fields
@@ -147,10 +281,24 @@ namespace OsEngine.OsTrader.Panels.Tab.SyntheticBondTab
         /// </summary>
         public decimal MinSpread;
 
+        public BondScenarioState State = BondScenarioState.Stopped;
+
+        public int CyclesCount;
+
+        public int CompletedCycles;
+
+        public int MaxQuoteAgeSeconds = 10;
+
         /// <summary>
         /// Non-trading periods for this scenario. | Неторговые периоды данного сценария.
         /// </summary>
         public NonTradePeriods NonTradePeriods;
+
+        private readonly object _runtimeDataLocker = new object();
+
+        private decimal _currentBidAskSpread;
+
+        private bool _hasCurrentBidAskSpread;
 
         #endregion
 

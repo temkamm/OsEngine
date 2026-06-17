@@ -36,6 +36,8 @@ namespace OsEngine
 {
     public partial class MainWindow
     {
+        private static readonly bool EnableAutoUpdateCheck = false;
+
         private static MainWindow _window;
 
         private UpdateResponse _updServerResp;
@@ -120,8 +122,11 @@ namespace OsEngine
             Task task = new Task(ThreadAreaGreeting);
             task.Start();
 
-            Task updateTask = new Task(GetUpdateInfo);
-            updateTask.Start();
+            if (EnableAutoUpdateCheck)
+            {
+                Task updateTask = new Task(GetUpdateInfo);
+                updateTask.Start();
+            }
 
             ChangeText();
             OsLocalization.LocalizationTypeChangeEvent += ChangeText;

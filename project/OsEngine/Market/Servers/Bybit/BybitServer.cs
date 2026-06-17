@@ -4550,7 +4550,7 @@ namespace OsEngine.Market.Servers.Bybit
                     else
                     {
                         SendLogMessage($"CheckApiKeyInformation>. Error. Code: {keyInformation.retCode}\n"
-                            + $"Message: {keyInformation.retMsg}", LogMessageType.Error);
+                            + $"Message: {GetBybitErrorMessage(keyInformation.retCode, keyInformation.retMsg)}", LogMessageType.Error);
                     }
                 }
                 else
@@ -4788,6 +4788,16 @@ namespace OsEngine.Market.Servers.Bybit
 
                 return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
             }
+        }
+
+        private string GetBybitErrorMessage(string retCode, string retMsg)
+        {
+            if (retCode == "10002")
+            {
+                return "Часы компьютера не синхронизированы с временем Bybit. Синхронизируйте время Windows и переподключите сервер.";
+            }
+
+            return retMsg;
         }
 
         private string GeneratePostSignature(IDictionary<string, object> parameters, string Timestamp)

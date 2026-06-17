@@ -408,6 +408,46 @@
 
                 </Grid>
             </TabItem>
+            <TabItem Header="Инфо" Name="InfoTabItem">
+                <Grid Margin="5">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="28"/>
+                        <RowDefinition Height="28"/>
+                        <RowDefinition Height="28"/>
+                        <RowDefinition Height="28"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="220"/>
+                        <ColumnDefinition Width="120"/>
+                        <ColumnDefinition Width="120"/>
+                        <ColumnDefinition Width="120"/>
+                        <ColumnDefinition Width="120"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Параметр / инструмент" VerticalAlignment="Center" Margin="4,0,4,0"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" Text="Пункты" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="4,0,4,0"/>
+                    <TextBlock Grid.Row="0" Grid.Column="2" Text="%" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="4,0,4,0"/>
+                    <TextBlock Grid.Row="0" Grid.Column="3" Text="Ask" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="4,0,4,0"/>
+                    <TextBlock Grid.Row="0" Grid.Column="4" Text="Bid" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="4,0,4,0"/>
+
+                    <Label Grid.Row="1" Grid.Column="0" Content="Макс возраст котировки (сек)" VerticalAlignment="Center" Padding="2,0,0,0"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" Name="InfoMaxQuoteAgeTextBox" Height="23" VerticalAlignment="Center" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+
+                    <TextBox Grid.Row="2" Grid.Column="0" Name="InfoFuturesSecurityTextBox" Height="23" VerticalAlignment="Center" IsReadOnly="True" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+                    <TextBox Grid.Row="2" Grid.Column="1" Name="InfoFuturesSpreadPointsTextBox" Height="23" VerticalAlignment="Center" IsReadOnly="True" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+                    <TextBox Grid.Row="2" Grid.Column="2" Name="InfoFuturesSpreadPercentTextBox" Height="23" VerticalAlignment="Center" IsReadOnly="True" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+                    <TextBox Grid.Row="2" Grid.Column="3" Name="InfoFuturesAskTextBox" Height="23" VerticalAlignment="Center" IsReadOnly="True" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+                    <TextBox Grid.Row="2" Grid.Column="4" Name="InfoFuturesBidTextBox" Height="23" VerticalAlignment="Center" IsReadOnly="True" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+
+                    <TextBox Grid.Row="3" Grid.Column="0" Name="InfoBaseSecurityTextBox" Height="23" VerticalAlignment="Center" IsReadOnly="True" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+                    <TextBox Grid.Row="3" Grid.Column="1" Name="InfoBaseSpreadPointsTextBox" Height="23" VerticalAlignment="Center" IsReadOnly="True" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+                    <TextBox Grid.Row="3" Grid.Column="2" Name="InfoBaseSpreadPercentTextBox" Height="23" VerticalAlignment="Center" IsReadOnly="True" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+                    <TextBox Grid.Row="3" Grid.Column="3" Name="InfoBaseAskTextBox" Height="23" VerticalAlignment="Center" IsReadOnly="True" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+                    <TextBox Grid.Row="3" Grid.Column="4" Name="InfoBaseBidTextBox" Height="23" VerticalAlignment="Center" IsReadOnly="True" VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+                </Grid>
+            </TabItem>
         </TabControl>
 
         <!-- ===== Лог ===== -->
